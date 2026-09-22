@@ -1,0 +1,3 @@
+[submodule "tools/rp2350js"]
+	path = tools/rp2350js
+	url = https://github.com/thanh20VN/rp2350js.git
