@@ -16,16 +16,32 @@ extern uint32_t __data_start, __data_end, __data_lma;
 extern uint32_t __bss_start, __bss_end;
 
 __attribute__((section(".init"), noreturn))
+void _reset(void);
+
+/* Entry point after reset. sp is undefined here, so this is naked (no compiler-generated
+   stack use): set sp, then jump to _reset_c. */
+__attribute__((naked, section(".init"), noreturn))
 void _reset(void) {
-    /* Set up the stack pointer, then copy .data/.bss like any runtime would. */
-    __asm volatile("la sp, %0" : : "i"(&__stack_top));
-    for (uint32_t *src = &__data_lma, *dst = &__data_start; dst < &__data_end;) {
+    __asm volatile(
+"la sp, __stack_top\n"
+"j _reset_c\n"
+    );
+}
+
+/* Called from _reset once sp is valid, so plain C works: copy .data/.bss like any runtime would. */
+__attribute__((noreturn))
+void _reset_c(void) {
+    for (uint32_t *src = &__data_lma, *dst = &__data_start;
+         dst < &__data_end;) {
         *dst++ = *src++;
     }
+
     for (uint32_t *dst = &__bss_start; dst < &__bss_end;) {
         *dst++ = 0;
     }
+
     main();
+
     while (1) {
         __asm volatile("");
     }
