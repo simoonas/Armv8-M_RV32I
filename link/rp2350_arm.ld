@@ -42,14 +42,14 @@ SECTIONS
     __data_end = .;
   } > RAM AT> FLASH
 
-  .bss ALIGN(4) :
+  .bss (NOLOAD) :
   {
+    . = ALIGN(4);
     __bss_start = .;
     *(.bss*)
     *(COMMON)
     __bss_end = .;
   } > RAM
-
-  . = ALIGN(4);
+    . = ALIGN(4);
   __heap_start = .;
 }

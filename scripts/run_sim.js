@@ -1,19 +1,26 @@
 /**
- * Run a benchmark image on the rp2350js emulator and report executed cycles.
+ * Runs a benchmark image on the rp2350js emulator and measures bechmark cycles.
  *
  * Usage:
- *   node scripts/run_sim.js <image.uf2>
+ *   node scripts/run_sim.js <image.uf2> [--verbose]
+ *   node scripts/run_sim.js --all [--verbose]
  *
  * The image is loaded into flash/SRAM without going through the emulated
  * bootrom (our bare-metal images have no picobin IMAGE_DEF, so the bootrom
  * cannot boot them). Instead we read the initial SP/PC from the vector table
  * (ARM) or jump to the image base (RISC-V) and start stepping directly.
  *
- * Cycle counting: we record the cycle count the moment "START_BENCHMARK\n"
- * and "END_BENCHMARK\n" arrive on UART0 and report the difference, i.e. the
+ * Cycle counting: we record the cycle count the moment each bechmark's START and END markers
+ * (e.g. START_ARITHMETIC_BENCHMARK) arrive on UART0 and report the difference, i.e. the
  * cycles spent inside the benchmark workload.
+ * 
+ * Results: measurements are saved to JSON files under /results for further use.
  */
 const { RP2350 } = require('../tools/rp2350js/dist/cjs');
+const fs = require('fs');
+const path = require('path');
+
+const RESULTS_DIR = path.join(__dirname, '..', 'results');
 
 const FLASH_BASE = 0x10000000;
 // SRAM parking spot for core1, near the top of the 520 KB SRAM but clear of
@@ -21,27 +28,42 @@ const FLASH_BASE = 0x10000000;
 const PARK_ADDR = 0x2007ffe0;
 const MAX_STEPS = 200000000;
 
-function run(imagePath) {
-  const arch = /riscv/i.test(imagePath) ? 'riscv' : 'arm';
+const FIRMWARE_IMAGES = [
+  { path: 'build_arm/arm_O2.uf2', arch: 'ARM', opt: '-O2' },
+  { path: 'build_arm/arm_Os.uf2', arch: 'ARM', opt: '-Os' },
+  { path: 'build_riscv/riscv_O2.uf2', arch: 'RISC-V', opt: '-O2' },
+  { path: 'build_riscv/riscv_Os.uf2', arch: 'RISC-V', opt: '-Os' },
+];
+
+
+function run(image, verbose = false) {
+  const arch = image.arch === 'RISC-V' ? 'riscv' : 'arm';
   const mcu = new RP2350({ coreArch: arch });
 
   let output = '';
-  let startCycles = null;
-  let endCycles = null;
+  const benchmarks = {
+    arithmetic: { start: null, end: null },
+    array: { start: null, end: null },
+    bitwise: { start: null, end: null },
+  }
 
   mcu.uart[0].onByte = (byte) => {
     const ch = String.fromCharCode(byte);
-    process.stdout.write(ch);
+    if (verbose) process.stdout.write(ch);
     output += ch;
-    if (output.endsWith('START_BENCHMARK\n') && startCycles === null) {
-      startCycles = mcu.cycles;
-    }
-    if (output.endsWith('END_BENCHMARK\n')) {
-      endCycles = mcu.cycles;
-    }
-  };
 
-  const { useSram, loadBase } = mcu.loadFirmware(imagePath, { initChip: false });
+    for (const [name, cycles] of Object.entries(benchmarks)) {
+      if (output.endsWith(`START_${name.toUpperCase()}_BENCHMARK\n`)) {
+        cycles.start = mcu.cycles;
+      }
+
+      if (output.endsWith(`END_${name.toUpperCase()}_BENCHMARK\n`)) {
+        cycles.end = mcu.cycles;
+      }
+    }
+  }
+
+  const { useSram, loadBase } = mcu.loadFirmware(image.path, { initChip: false });
   const entryBase = useSram ? loadBase : FLASH_BASE;
 
   if (arch === 'arm') {
@@ -68,16 +90,94 @@ function run(imagePath) {
 
   for (let i = 0; i < MAX_STEPS; i++) {
     mcu.step();
-    if (endCycles !== null) break;
+
+    if (Object.values(benchmarks).every(({ end }) => end !== null)) {
+      break;
+    }
   }
 
-  if (endCycles === null) {
-    console.error(`\n[sim] timeout: 'END_BENCHMARK' not reached within ${MAX_STEPS} steps`);
+  if (Object.values(benchmarks).some(({ end }) => end === null)) {
+    console.error(`\n[sim] timeout: end of benchmark not reached within ${MAX_STEPS} steps`);
     process.exit(1);
   }
 
-  const benchCycles = startCycles !== null ? endCycles - startCycles : endCycles;
-  console.log(`\n[sim] cycle count START->END_BENCHMARK: ${benchCycles}`);
+  return Object.fromEntries(
+    Object.entries(benchmarks).map(([name, cycles]) => [
+      name,
+      cycles.start !== null && cycles.end !== null
+        ? cycles.end - cycles.start
+        : null,
+    ])
+  )
 }
 
-run(process.argv[2]);
+function saveResult(image, measurements) {
+  fs.mkdirSync(RESULTS_DIR, { recursive: true });
+
+  const arch = image.arch.toLowerCase().replace('-', '');
+  const optimization = image.opt.replace('-', '');
+  const filename = `simulation_${arch}_${optimization}.json`;
+  const outputPath = path.join(RESULTS_DIR, filename);
+
+  const result = {
+    environment: 'simulation',
+    architecture: image.arch,
+    optimization: image.opt,
+    firmware: image.path,
+    measurements: Object.fromEntries(
+      Object.entries(measurements).map(([name, value]) => [
+        name,
+        { value }
+      ])
+    )
+  };
+
+  fs.writeFileSync(outputPath, JSON.stringify(result, null, 2) + '\n');
+  console.log(`Saved ${outputPath}`);
+}
+
+function runAll(verbose = false) {
+  const availableImages = FIRMWARE_IMAGES.filter((image) =>
+    fs.existsSync(image.path)
+  );
+
+  if (availableImages.length === 0) {
+    throw new Error('No firmware images found. Run make first.');
+  }
+
+  for (const image of availableImages) {
+    console.log(`\nRunning ${image.arch} ${image.opt}: ${image.path}`);
+    const measurements = run(image, verbose);
+    saveResult(image, measurements);
+  }
+}
+
+function main() {
+  const args = process.argv.slice(2);
+  const verbose = args.includes('--verbose');
+  const argument = args.find((arg) => arg !== '--verbose');
+
+  try {
+    if (argument === '--all') {
+      runAll();
+    } else if (argument) {
+      const image = FIRMWARE_IMAGES.find((item) => item.path === argument);
+
+      if (!image) {
+        throw new Error(`Unknown firmware image: ${argument}`);
+      }
+
+      saveResult(image, run(image, verbose));
+    } else {
+      console.error(
+        'Usage: node scripts/run_sim.js <image.uf2> OR node scripts/run_sim.js --all'
+      );
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
+}
+
+main();
