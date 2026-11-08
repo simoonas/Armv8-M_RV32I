@@ -20,7 +20,7 @@ arm:
 	fi
 
 riscv:
-	@if command -v riscv-none-elf-gcc >/dev/null 2>&1 || command -v riscv64-unknown-elf-gcc >/dev/null 2>&1 || command -v riscv32-elf-gcc >/dev/null 2>&1; then \
+	@if command -v riscv64-elf-gcc >/dev/null 2>&1 || command -v riscv-none-elf-gcc >/dev/null 2>&1 || command -v riscv64-unknown-elf-gcc >/dev/null 2>&1 || command -v riscv32-elf-gcc >/dev/null 2>&1; then \
 		printf '== Building RISC-V (Hazard3) -O2 and -Os ==\n'; \
 		mkdir -p build_riscv; \
 		cd build_riscv && cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain-riscv.cmake ..; \

@@ -8,18 +8,37 @@ Compile small C program for RP2350's 2 CPU architectures (ARM Cortex-M33, RISC-V
 builds are bare metal (own startup code + linker scripts), small and the architecture comparison is clean.
 
 ## Clone
-`git clone --recursive https://github.com/simoonas/Armv8-M_RV32I`
+
+```bash
+git clone --recursive https://github.com/simoonas/Armv8-M_RV32I
+```
 ## Install toolchains (Arch)
 
 ### ARM
-`sudo pacman -S arm-none-eabi-gcc arm-none-eabi-newlib cmake base-devel`
+
+```bash
+sudo pacman -S arm-none-eabi-gcc arm-none-eabi-newlib cmake base-devel
+```
+
 ### RISC-V
-`yay -S riscv32-elf-gcc riscv32-elf-newlib`
+
+```bash
+yay -S riscv32-elf-gcc riscv32-elf-newlib
+```
 
 RISC-V targets are skipped if none of these toolhains is installed:
 - `riscv32-elf-gcc`
 - `riscv-none-elf-gcc`
-- `riscv64-unknown-elf-gcc`)
+- `riscv64-unknown-elf-gcc`
+- `riscv64-elf-gcc`
+
+## Install toolchains (macOS)
+
+Install the required build tools using Homebrew:
+
+```bash
+brew install cmake arm-none-eabi-gcc riscv64-elf-gcc
+```
 
 ## Usage
 
