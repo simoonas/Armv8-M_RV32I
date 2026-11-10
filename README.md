@@ -40,6 +40,26 @@ Install the required build tools using Homebrew:
 brew install cmake arm-none-eabi-gcc riscv64-elf-gcc
 ```
 
+## Quick start (step by step)
+
+```bash
+make arm          # 1. build ARM benchmark images (build_arm/arm_O2|Os.uf2)
+make sim          # 2. run them in the simulator, prints cycle counts
+make compare      # 3. print size + cycle comparison tables
+```
+
+Run on real hardware (Pico 2 + Debug Probe, see details below):
+
+```bash
+./scripts/setup_openocd.sh   # 0. one-time: build RP2350 OpenOCD (needs ./scripts and git)
+make flash-arm    # 1. build + flash + verify over SWD
+make uart         # 2. watch UART output live (Ctrl-C to stop)
+make halt-cm0     # 3. (when it misbehaves) SWD-halt core 0 and dump pc/lr/sp
+
+make flash-smoke  # rescue: PING-only build to test when the board is silent
+make clean        # remove build_arm and build_riscv
+```
+
 ## Usage
 
 Everything is in the toplevel Makefile:
@@ -76,3 +96,141 @@ python3 scripts/parse_elf.py build_arm/arm_O2.elf build_arm/arm_Os.elf \
 - `scripts/run_sim.js` loads a `.uf2` into rp2350js and boots by setting the vector table SP/PC directly (bare images have no IMAGE_DEF block), parks core 1, and prints the cycle count between START and END.
 - `scripts/parse_elf.py` prints per arch binary size table.
 - `tools/rp2350js` git submodule of the simulator.
+
+## Running on real hardware (Raspberry Pi Pico 2)
+
+`make hardware` rebuilds everything and prints flash/monitor instructions.
+The produced `.uf2` images are real-device bootable:
+
+- `src/image_def.S` embeds the picobin `IMAGE_DEF` block the RP2350 bootrom
+  requires (it scans the first 4 KB of flash; without this block the image
+  never boots). ARM boots through the vector table at flash base; the RISC-V
+  block carries the entry point and initial SP.
+- `board_init()` (in `src/main.c`) starts the Pico 2's 12 MHz crystal, runs
+  `clk_sys`/`clk_peri` from it, and configures UART0 (`GPIO0` = TX) at
+  115200 8N1. On real hardware output is visible via the marker strings:
+  `START_/END_{ARITHMETIC,ARRAY,BITWISE}_BENCHMARK`.
+
+Steps (Debug Probe, SWD + UART):
+
+1. Wire the Debug Probe: **SWD** connector → the Pico's `DEBUG` pads
+   (keyed), **UART** connector → Pico pins 1-3 next to the USB connector
+   (GP0 = UART0 TX, GP1 = UART0 RX, GND).
+2. One-time: build the RP2350-capable OpenOCD fork - `./scripts/setup_openocd.sh`
+   (distro OpenOCD cannot flash RP2350). After a reboot, if OpenOCD reports
+   `unable to find a matching CMSIS-DAP device`, reload the HID helpers:
+   `sudo modprobe hid_generic usbhid` and replug the probe
+   (`docs/hardware-debugging.md`).
+3. `make flash-arm` - builds, flashes over SWD and **verifies** the image
+   (`program ... verify`; BOOTSEL drag-and-drop has been seen to write flash
+   only partially, leaving a silent board). `make flash-smoke` flashes the
+   PING-only diagnostic build for bring-up checks.
+4. `make uart` - streams the UART output live (Ctrl-C to stop).
+   Expected: `BOOT0123456789`, six `START_/END_*_BENCHMARK` markers, then
+   `ALIVE` heartbeats.
+5. `make halt-cm0` - SWD-halts core 0 and prints pc/lr/sp/xpsr for post-mortems.
+   Example: a `pc` inside `_hang` means a HardFault occurred (vector table
+   parks NMI/HardFault there deliberately); `docs/hardware-debugging.md`
+   explains how to read the fault frame from the stack.
+
+`make hardware` reprints this command summary.
+
+# Hardware bring-up and debugging (Pico 2 W + Debug Probe)
+
+Workflow for running the ARM benchmark on real RP2350 hardware, established
+after a long "silent board" investigation.
+
+## Wiring
+
+The Raspberry Pi Debug Probe exposes two 3-pin keyed connectors; both are used
+simultaneously:
+
+| Probe connector | Plugs onto            | Pins                       |
+|-----------------|-----------------------|----------------------------|
+| `UART`          | Pico pins 1-3, **next to the Pico's USB connector** | GP0 = UART0 TX (out of Pico), GP1 = UART0 RX (into Pico), GND |
+| `SWD` (keyed)   | Pico `DEBUG` pads on the bottom edge          | SWCLK, SWDIO, GND |
+
+Serial port: the probe enumerates as two CDC interfaces; the UART bridge is
+the `if01` device, e.g.
+`/dev/serial/by-id/usb-Raspberry_Pi_Debug_Probe__CMSIS-DAP__*-if01` (usually
+`/dev/ttyACM3` here; the Pico's own USB CDC if02 path is separate).
+
+Note: on a Pico **2 W** the onboard LED is on the CYW43 (WL_GPIO0), and
+GPIO25 is WL_CS - firmware that "blinks GPIO25" does nothing visible.
+
+## Flashing: always SWD + verify
+
+`flash-arm` / `flash-smoke` run OpenOCD with `program ... verify`:
+
+```
+make flash-arm     # benchmark firmware
+make flash-smoke   # UART-only diagnostic image (PING-9955 every 100 ms)
+```
+
+First build OpenOCD once (RP2350 support is not in distro 0.12.0):
+
+```
+./scripts/setup_openocd.sh          # installs to ~/.local/opt/openocd-rp2350
+```
+
+If after a reboot OpenOCD says `unable to find a matching CMSIS-DAP device`
+while the probe is plugged in: the kernel HID helper modules are not loaded
+(the probe's DAP interface is software-hidden from udev; the CDC serial still
+enumerates). Fix with:
+
+```
+sudo modprobe hid_generic usbhid    # then unplug + replug the probe
+sudo systemctl restart systemd-modules-load.service   # optional
+```
+
+Without a verified flash, prefer `make flash-arm` over BOOTSEL drag-and-drop:
+BOOTSEL copies have repeatedly written flash **only partway** in this project,
+leaving the tail of the image erased (`0xffffffff`). The board then executes
+code with a blank literal pool/`.rodata` and either faults into the vector
+table's `_hang` handler or emits garbage - symptoms which cost a long bisection
+here before SWD exposed them. `program ... verify` makes writes self-checking.
+
+OpenOCD success markers: `** Programming Finished **`, `** Verify Started **`,
+`** Verified OK **`.
+
+## Reading UART output
+
+```
+stty -F /dev/ttyACM3 115200 raw -echo clocal
+timeout 30 cat /dev/ttyACM3 > /tmp/uart.log
+```
+
+Expected lines: `BOOT0123456789`, then the six
+`START_/END_{ARITHMETIC,ARRAY,BITWISE}_BENCHMARK` markers, then `ALIVE`
+heartbeats. The firmware prints over UART0 GP0/GP1 at 115200 8N1
+(12 MHz clk_peri, divisors IBRD=6/FBRD=33).
+
+## Live debugging
+
+```
+cd ~/.local/opt/openocd-rp2350
+src/openocd -f tcl/interface/cmsis-dap.cfg -f tcl/target/rp2350.cfg -s tcl \
+    -c "adapter speed 5000" -c init -c "targets rp2350.cm0" \
+    -c "halt" -c "reg pc lr sp xpsr" -c "mdw 0x10000000 16" -c shutdown
+```
+
+Symbolize faulting PCs with:
+
+```
+arm-none-eabi-addr2line -e build_arm/arm_O2.elf -f -p -a <pc> <lr>
+```
+
+The vector table (src/startup_arm.c) fills NMI/HardFault/SVC/SysTick entries
+with a `_hang` loop; halting the board and finding `pc` inside `_hang` means
+an exception occurred - inspect the fault frame on the stack (`mdw` at `msp`)
+and symbolize the frame pc/lr.
+
+## Debug builds
+
+- `make arm` - benchmark firmware, -O2 and -Os, UF2/ELF in `build_arm/`.
+- `make smoke-arm` - `arm_smoke_O2`: `board_init()` only, then a `PING-9955`
+  line every ~100 ms, no benchmarks and no GPIO25 writes. Use it whenever a
+  board goes silent: it isolates clock/pad/UART bring-up from the benchmark.
+- The simulator (`make sim`) stays the source of truth for cycle counts; the
+  markers/ALIVE lines additionally printed on hardware-only runs are
+  diagnostics for the real-board path.

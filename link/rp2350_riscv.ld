@@ -15,7 +15,15 @@ __stack_top = 0x20080000;
 
 SECTIONS
 {
-  .text :
+  /* picobin IMAGE_DEF block (src/image_def.S) sits FIRST at the flash base
+   * so its ENTRY_POINT item can address _reset; the bootrom scans the first
+   * 4 KB of the image for it, and the real entry PC/SP come from this block. */
+  .image_def :
+  {
+    KEEP(*(.image_def))
+  } > FLASH
+
+  .text ALIGN(4) :
   {
     KEEP(*(.init))
     *(.text*)

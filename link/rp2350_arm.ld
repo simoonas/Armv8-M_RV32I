@@ -24,6 +24,13 @@ SECTIONS
     KEEP(*(.vectors))
   } > FLASH
 
+  /* picobin IMAGE_DEF block (src/image_def.S), required by the RP2350
+   * bootrom's flash scan; it searches the first 4 KB of the image. */
+  .image_def :
+  {
+    KEEP(*(.image_def))
+  } > FLASH
+
   .text :
   {
     *(.text*)

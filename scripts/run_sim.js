@@ -80,8 +80,15 @@ function run(image, verbose = false) {
     mcu.writeUint16(PARK_ADDR, 0xbf30);
     mcu.core[1].PC = PARK_ADDR;
   } else {
-    // RISC-V image starts with _reset at the load base (startup sets sp itself).
-    mcu.core[0].PC = entryBase;
+    // RISC-V images start with the picobin IMAGE_DEF block; its ENTRY_POINT
+    // item (tag 0x44, size 3) carries the real entry PC (word at base+12) and
+    // initial SP (word at base+16). _reset is naked and re-runs `la sp` from
+    // __stack_top itself, so setting x2 here only mirrors the same value.
+    const entryPc = mcu.readUint32(entryBase + 12) >>> 0;
+    const initialSp = mcu.readUint32(entryBase + 16) >>> 0;
+
+    mcu.core[0].PC = entryPc;
+    mcu.core[0].setRegister(2, initialSp);
 
     // Park core1 in an infinite `jal x0, 0` loop.
     mcu.writeUint32(PARK_ADDR, 0x0000006f);

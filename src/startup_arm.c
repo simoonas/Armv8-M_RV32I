@@ -19,12 +19,31 @@ extern uint32_t __bss_start, __bss_end;
 
 void _reset(void);
 
+/* Trap handler for NMI/HardFault/faults/IRQs we do not use: park instead of
+ * executing whatever garbage the vector table used to contain. */
+__attribute__((noreturn)) static void _hang(void)
+{
+    while (1) {
+        __asm volatile("wfi");
+    }
+}
+
 /* ARMv8-M reset: initial MSP at offset 0, reset vector at offset 4 with the
- * Thumb bit set. Must sit at the very start of flash (0x10000000). */
+ * Thumb bit set, then NMI/HardFault and reserved/system entries. Must sit at
+ * the very start of flash (0x10000000). Filling unused entries with _hang
+ * keeps an accidental exception from running random flash contents. */
 __attribute__((section(".vectors"), used))
 const uint32_t vector_table[] = {
-    (uint32_t)&__stack_top,      /* initial Main Stack Pointer */
-    (uint32_t)&_reset_vector,    /* reset handler, Thumb bit set */
+    (uint32_t)&__stack_top,                      /* initial Main Stack Pointer */
+    (uint32_t)&_reset_vector,                    /* reset handler, Thumb bit set */
+    (uint32_t)((const void *)_hang + 1),         /* NMI */
+    (uint32_t)((const void *)_hang + 1),         /* HardFault */
+    0, 0, 0, 0, 0, 0, 0,                         /* reserved */
+    (uint32_t)((const void *)_hang + 1),         /* SVC */
+    (uint32_t)((const void *)_hang + 1),         /* DebugMon */
+    0,                                           /* reserved */
+    (uint32_t)((const void *)_hang + 1),         /* PendSV */
+    (uint32_t)((const void *)_hang + 1),         /* SysTick */
 };
 
 void _reset(void) {
