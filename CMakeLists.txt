@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(arm_vs_riscv_benchmark C ASM)
+project(arm_vs_riscv_benchmark C)
 
 # The cross toolchain files (cmake/toolchain-<arch>.cmake) define ARCH,
 # BINUTILS_PREFIX, COMMON_C_FLAGS and CMAKE_C_COMPILER. One architecture per
@@ -13,12 +13,10 @@ if(ARCH STREQUAL "arm")
   set(BIN_PREFIX arm)
   set(STARTUP src/startup_arm.c)
   set(LDSCRIPT link/rp2350_arm.ld)
-  set(UF2_FAMILY_ID 0xe48bff59)   # RP2350 ARM-S
 elseif(ARCH STREQUAL "riscv")
   set(BIN_PREFIX riscv)
   set(STARTUP src/startup_riscv.c)
   set(LDSCRIPT link/rp2350_riscv.ld)
-  set(UF2_FAMILY_ID 0xe48bff5a)   # RP2350 RISC-V
 else()
   message(FATAL_ERROR "Unknown ARCH '${ARCH}'. Expected 'arm' or 'riscv'.")
 endif()
@@ -32,7 +30,7 @@ separate_arguments(COMMON_C_FLAGS UNIX_COMMAND "${COMMON_C_FLAGS}")
 foreach(opt O2 Os)
   set(tgt ${BIN_PREFIX}_${opt})
 
-  add_executable(${tgt} ${STARTUP} src/image_def.S src/main.c)
+  add_executable(${tgt} ${STARTUP} src/main.c)
   set_target_properties(${tgt} PROPERTIES SUFFIX .elf)
 
   target_compile_options(${tgt} PRIVATE ${COMMON_C_FLAGS} -${opt})
@@ -50,7 +48,7 @@ foreach(opt O2 Os)
     COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/elf2uf2.py
             ${CMAKE_CURRENT_BINARY_DIR}/${tgt}.bin
             ${CMAKE_CURRENT_BINARY_DIR}/${tgt}.uf2
-            ${UF2_FAMILY_ID}
+            ${ARCH}
     COMMENT "Generating ${tgt}.bin and ${tgt}.uf2"
     VERBATIM)
 endforeach()
@@ -58,7 +56,7 @@ endforeach()
 # UART smoke test (ARM only): minimal bring-up + repeating PING print, used
 # to bisect real-hardware UART bring-up without any benchmark/LED code.
 if(ARCH STREQUAL "arm")
-  add_executable(arm_smoke_O2 ${STARTUP} src/image_def.S src/main.c)
+  add_executable(arm_smoke_O2 ${STARTUP} src/main.c)
   set_target_properties(arm_smoke_O2 PROPERTIES SUFFIX .elf)
   target_compile_definitions(arm_smoke_O2 PRIVATE UART_SMOKE)
   target_compile_options(arm_smoke_O2 PRIVATE ${COMMON_C_FLAGS} -O2)
@@ -75,7 +73,7 @@ if(ARCH STREQUAL "arm")
     COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/elf2uf2.py
             ${CMAKE_CURRENT_BINARY_DIR}/arm_smoke_O2.bin
             ${CMAKE_CURRENT_BINARY_DIR}/arm_smoke_O2.uf2
-            ${UF2_FAMILY_ID}
+            ${ARCH}
     COMMENT "Generating arm_smoke_O2.bin and arm_smoke_O2.uf2"
     VERBATIM)
 endif()

@@ -17,6 +17,21 @@ extern uint32_t __bss_start, __bss_end;
 
 __attribute__((section(".init"), noreturn))
 void _reset(void);
+/* IMAGE_DEF block: tells the RP2350 bootrom "this is a bootable RISC-V
+ * program". Without it the bootrom refuses to run the image from flash. The
+ * bootrom searches the first 4 KB of flash for it; the linker script places it
+ * right after _reset. With no ENTRY_POINT item, the bootrom starts RISC-V
+ * programs at the start of the image, which is _reset. The simulator ignores it.
+ * Format: RP2350 datasheet "minimum viable image metadata", same as
+ * pico-sdk's embedded_start_block.inc.S. */
+__attribute__((section(".embedded_block"), used))
+const uint32_t image_def[] = {
+    0xffffded3, /* block start marker */
+    0x11010142, /* IMAGE_TYPE item (0x42), 1 word: EXE | RISC-V | RP2350 */
+    0x000001ff, /* LAST item: the items above total 1 word */
+    0x00000000, /* offset to the next block: 0 = this block links to itself */
+    0xab123579, /* block end marker */
+};
 
 /* Entry point after reset. sp is undefined here, so this is naked (no compiler-generated
    stack use): set sp, then jump to _reset_c. */

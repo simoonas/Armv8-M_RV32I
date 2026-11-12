@@ -5,10 +5,11 @@
  *   node scripts/run_sim.js <image.uf2> [--verbose]
  *   node scripts/run_sim.js --all [--verbose]
  *
- * The image is loaded into flash/SRAM without going through the emulated
- * bootrom (our bare-metal images have no picobin IMAGE_DEF, so the bootrom
- * cannot boot them). Instead we read the initial SP/PC from the vector table
- * (ARM) or jump to the image base (RISC-V) and start stepping directly.
+ * The image is loaded into flash/SRAM without running the emulated bootrom.
+ * Our images do contain the IMAGE_DEF block that the real bootrom needs, but
+ * the simulator skips the bootrom: it reads the initial SP/PC from the vector
+ * table (ARM) or jumps to the start of the image, where _reset is (RISC-V),
+ * and starts stepping from there.
  *
  * Cycle counting: we record the cycle count the moment each bechmark's START and END markers
  * (e.g. START_ARITHMETIC_BENCHMARK) arrive on UART0 and report the difference, i.e. the
@@ -21,11 +22,14 @@ const fs = require('fs');
 const path = require('path');
 
 const RESULTS_DIR = path.join(__dirname, '..', 'results');
-
 const FLASH_BASE = 0x10000000;
-// SRAM parking spot for core1, near the top of the 520 KB SRAM but clear of
-// the stack (which grows down from __stack_top = 0x20080000).
-const PARK_ADDR = 0x2007ffe0;
+
+// SRAM parking spot for core1: the start of SRAM9 (0x20081000), a 4 KB scratch
+// bank our program never uses. The stack grows DOWN from __stack_top =
+// 0x20080000, so anything just below that address gets overwritten by main()'s
+// stack frame; anything above it is safe (the simulator's SRAM is 520 KB, up to
+// 0x20082000).
+const PARK_ADDR = 0x20081000;
 const MAX_STEPS = 200000000;
 
 const FIRMWARE_IMAGES = [
@@ -80,15 +84,8 @@ function run(image, verbose = false) {
     mcu.writeUint16(PARK_ADDR, 0xbf30);
     mcu.core[1].PC = PARK_ADDR;
   } else {
-    // RISC-V images start with the picobin IMAGE_DEF block; its ENTRY_POINT
-    // item (tag 0x44, size 3) carries the real entry PC (word at base+12) and
-    // initial SP (word at base+16). _reset is naked and re-runs `la sp` from
-    // __stack_top itself, so setting x2 here only mirrors the same value.
-    const entryPc = mcu.readUint32(entryBase + 12) >>> 0;
-    const initialSp = mcu.readUint32(entryBase + 16) >>> 0;
-
-    mcu.core[0].PC = entryPc;
-    mcu.core[0].setRegister(2, initialSp);
+    // RISC-V image starts with _reset at the load base (startup sets sp itself).
+    mcu.core[0].PC = entryBase;
 
     // Park core1 in an infinite `jal x0, 0` loop.
     mcu.writeUint32(PARK_ADDR, 0x0000006f);

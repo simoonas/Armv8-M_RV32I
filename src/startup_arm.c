@@ -46,6 +46,22 @@ const uint32_t vector_table[] = {
     (uint32_t)((const void *)_hang + 1),         /* SysTick */
 };
 
+/* IMAGE_DEF block: tells the RP2350 bootrom "this is a bootable Arm program".
+ * Without it the bootrom refuses to run the image from flash. The bootrom
+ * searches the first 4 KB of flash for it; the linker script places it right
+ * after the vector table. The simulator ignores it.
+ * Format: RP2350 datasheet "minimum viable image metadata", same as
+ * pico-sdk's embedded_start_block.inc.S. */
+__attribute__((section(".embedded_block"), used))
+const uint32_t image_def[] = {
+    0xffffded3, /* block start marker */
+    0x10210142, /* IMAGE_TYPE item (0x42), 1 word: EXE | Secure | Arm | RP2350 */
+    0x000001ff, /* LAST item: the items above total 1 word */
+    0x00000000, /* offset to the next block: 0 = this block links to itself */
+    0xab123579, /* block end marker */
+};
+
+/* Entry point: copy .data, zero .bss, run main. */
 void _reset(void) {
     /* Copy .data initialisers from flash into RAM. */
     for (uint32_t *src = &__data_lma, *dst = &__data_start; dst < &__data_end;) {
