@@ -17,7 +17,7 @@
  * 
  * Results: measurements are saved to JSON files under /results for further use.
  */
-const { RP2350 } = require('../tools/rp2350js/dist/cjs');
+const { RP2350, ConsoleLogger } = require('../tools/rp2350js/dist/cjs');
 const fs = require('fs');
 const path = require('path');
 
@@ -32,6 +32,14 @@ const FLASH_BASE = 0x10000000;
 const PARK_ADDR = 0x20081000;
 const MAX_STEPS = 200000000;
 
+// rp2350js log levels (its LogLevel enum is only exported as a type, so the
+// values are copied here). board_init() touches the XOSC and CLK_PERI_CTRL
+// registers, which the simulator doesn't implement, and each access prints an
+// "Unimplemented peripheral" warning. Normal runs show errors only; --verbose
+// shows everything.
+const LOG_LEVEL_DEBUG = 0;
+const LOG_LEVEL_ERROR = 3;
+
 const FIRMWARE_IMAGES = [
   { path: 'build_arm/arm_O2.uf2', arch: 'ARM', opt: '-O2' },
   { path: 'build_arm/arm_Os.uf2', arch: 'ARM', opt: '-Os' },
@@ -43,6 +51,7 @@ const FIRMWARE_IMAGES = [
 function run(image, verbose = false) {
   const arch = image.arch === 'RISC-V' ? 'riscv' : 'arm';
   const mcu = new RP2350({ coreArch: arch });
+  mcu.logger = new ConsoleLogger(verbose ? LOG_LEVEL_DEBUG : LOG_LEVEL_ERROR, true);
 
   let output = '';
   const benchmarks = {
@@ -163,7 +172,7 @@ function main() {
 
   try {
     if (argument === '--all') {
-      runAll();
+      runAll(verbose);
     } else if (argument) {
       const image = FIRMWARE_IMAGES.find((item) => item.path === argument);
 

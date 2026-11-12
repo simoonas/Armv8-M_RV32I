@@ -24,56 +24,41 @@ endif()
 # Split COMMON_C_FLAGS (a single string from the toolchain file) into args.
 separate_arguments(COMMON_C_FLAGS UNIX_COMMAND "${COMMON_C_FLAGS}")
 
-# Build the same programme once per optimisation level, producing
-#   <arch>_O2.elf / <arch>_O2.bin / <arch>_O2.uf2
-#   <arch>_Os.elf / <arch>_Os.bin / <arch>_Os.uf2
-foreach(opt O2 Os)
-  set(tgt ${BIN_PREFIX}_${opt})
+# add_firmware(<name> <opt> <sources...>)
+# Builds <name>.elf from the given sources at optimisation level -<opt>, then
+# converts it to <name>.bin (raw bytes) and <name>.uf2 (for drag-and-drop
+# flashing). Every image in this project goes through here.
+function(add_firmware name opt)
+  add_executable(${name} ${ARGN})
+  set_target_properties(${name} PROPERTIES SUFFIX .elf)
 
-  add_executable(${tgt} ${STARTUP} src/main.c)
-  set_target_properties(${tgt} PROPERTIES SUFFIX .elf)
-
-  target_compile_options(${tgt} PRIVATE ${COMMON_C_FLAGS} -${opt})
-  target_link_options(${tgt} PRIVATE
+  target_compile_options(${name} PRIVATE ${COMMON_C_FLAGS} -${opt})
+  target_link_options(${name} PRIVATE
     -nostdlib
     -T ${CMAKE_SOURCE_DIR}/${LDSCRIPT}
     -Wl,--gc-sections
     -lgcc
   )
 
-  add_custom_command(TARGET ${tgt} POST_BUILD
+  add_custom_command(TARGET ${name} POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O binary
-            $<TARGET_FILE:${tgt}>
-            ${CMAKE_CURRENT_BINARY_DIR}/${tgt}.bin
+            $<TARGET_FILE:${name}>
+            ${CMAKE_CURRENT_BINARY_DIR}/${name}.bin
     COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/elf2uf2.py
-            ${CMAKE_CURRENT_BINARY_DIR}/${tgt}.bin
-            ${CMAKE_CURRENT_BINARY_DIR}/${tgt}.uf2
+            ${CMAKE_CURRENT_BINARY_DIR}/${name}.bin
+            ${CMAKE_CURRENT_BINARY_DIR}/${name}.uf2
             ${ARCH}
-    COMMENT "Generating ${tgt}.bin and ${tgt}.uf2"
+    COMMENT "Generating ${name}.bin and ${name}.uf2"
     VERBATIM)
+endfunction()
+
+# The benchmark programme, once per optimisation level:
+#   <arch>_O2.elf / .bin / .uf2   and   <arch>_Os.elf / .bin / .uf2
+foreach(opt O2 Os)
+  add_firmware(${BIN_PREFIX}_${opt} ${opt} ${STARTUP} src/board.c src/main.c)
 endforeach()
 
-# UART smoke test (ARM only): minimal bring-up + repeating PING print, used
-# to bisect real-hardware UART bring-up without any benchmark/LED code.
-if(ARCH STREQUAL "arm")
-  add_executable(arm_smoke_O2 ${STARTUP} src/main.c)
-  set_target_properties(arm_smoke_O2 PROPERTIES SUFFIX .elf)
-  target_compile_definitions(arm_smoke_O2 PRIVATE UART_SMOKE)
-  target_compile_options(arm_smoke_O2 PRIVATE ${COMMON_C_FLAGS} -O2)
-  target_link_options(arm_smoke_O2 PRIVATE
-    -nostdlib
-    -T ${CMAKE_SOURCE_DIR}/${LDSCRIPT}
-    -Wl,--gc-sections
-    -lgcc
-  )
-  add_custom_command(TARGET arm_smoke_O2 POST_BUILD
-    COMMAND ${CMAKE_OBJCOPY} -O binary
-            $<TARGET_FILE:arm_smoke_O2>
-            ${CMAKE_CURRENT_BINARY_DIR}/arm_smoke_O2.bin
-    COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/elf2uf2.py
-            ${CMAKE_CURRENT_BINARY_DIR}/arm_smoke_O2.bin
-            ${CMAKE_CURRENT_BINARY_DIR}/arm_smoke_O2.uf2
-            ${ARCH}
-    COMMENT "Generating arm_smoke_O2.bin and arm_smoke_O2.uf2"
-    VERBATIM)
-endif()
+# UART smoke test: board_init() + a repeating "PING-9955" line, nothing else.
+# Used to check the board bring-up and serial wiring on real hardware.
+#   <arch>_smoke_O2.elf / .bin / .uf2
+add_firmware(${BIN_PREFIX}_smoke_O2 O2 ${STARTUP} src/board.c src/uart_smoke.c)
