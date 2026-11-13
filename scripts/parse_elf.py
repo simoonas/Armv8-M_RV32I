@@ -43,7 +43,7 @@ def pick_size_tool(filepath):
     name = Path(filepath).name.lower()
     candidates = ["llvm-size"]
     if "riscv" in name:
-        candidates += ["riscv-none-elf-size", "riscv64-unknown-elf-size"]
+        candidates += ["riscv64-elf-size", "riscv-none-elf-size", "riscv64-unknown-elf-size", "riscv32-elf-size"]
     else:
         candidates += ["arm-none-eabi-size"]
     for tool in candidates:
