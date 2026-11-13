@@ -96,6 +96,8 @@ void board_init(void)
     UART0_FBRD = 33u;
     UART0_LCR  = (3u << 5) | (1u << 4); /* 8 data bits + FIFO (8N1) */
     UART0_CR   = 0x101u;                /* UART enable | TX enable */
+
+    board_cycles_init();
 }
 
 void uart_print(const char *str)
@@ -114,3 +116,81 @@ void uart_print(const char *str)
         UART0_DR = (uint32_t)(*str++);
     }
 }
+
+void uart_print_u32(uint32_t value)
+{
+    char digits[10];
+    uint32_t count = 0;
+
+    if (value == 0u)
+    {
+        uart_print("0");
+        return;
+    }
+
+    while (value > 0u)
+    {
+        digits[count++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    }
+
+    while (count > 0u)
+    {
+        char one[2] = { digits[--count], '\0' };
+        uart_print(one);
+    }
+}
+
+/* ---------------------------- cycle counter ------------------------------ */
+/* ARM: SysTick used as a free-running 24-bit down-counter (clk_sys, no
+ * interrupt). It is part of the core's PPB, so it needs no reset/peripheral
+ * clock setup, and the rp2350js simulator implements it as well. We return
+ * the count as a rising value so `elapsed = after - before` works.
+ * RISC-V: the standard mcycle CSR (Hazard3 supports rdcycle). */
+
+#if defined(__arm__) || defined(__thumb__)
+
+#define SYST_CSR (*(volatile uint32_t *)0xE000E010u)
+#define SYST_RVR (*(volatile uint32_t *)0xE000E014u)
+#define SYST_CVR (*(volatile uint32_t *)0xE000E018u)
+#define SYST_CSR_ENABLE    (1u << 0)
+#define SYST_CSR_CLKSOURCE (1u << 2) /* 1 = clk_sys */
+#define SYST_RELOAD        0x00FFFFFFu
+
+void board_cycles_init(void)
+{
+    SYST_RVR = SYST_RELOAD;
+    SYST_CVR = 0u;
+    SYST_CSR = SYST_CSR_ENABLE | SYST_CSR_CLKSOURCE;
+}
+
+uint32_t board_cycles_now(void)
+{
+    return SYST_RELOAD - SYST_CVR;
+}
+
+#elif defined(__riscv)
+
+void board_cycles_init(void)
+{
+}
+
+uint32_t board_cycles_now(void)
+{
+    uint32_t cycles;
+    __asm volatile("rdcycle %0" : "=r"(cycles));
+    return cycles;
+}
+
+#else
+
+void board_cycles_init(void)
+{
+}
+
+uint32_t board_cycles_now(void)
+{
+    return 0u;
+}
+
+#endif

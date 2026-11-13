@@ -4,6 +4,7 @@ Compile small C program for RP2350's 2 CPU architectures (ARM Cortex-M33, RISC-V
 
 - Binary size at `-O2` and `-Os` (flash/RAM footprint)
 - Cycle count reported by [rp2350js](tools/rp2350js) while it runs produced UF2 images from `START_BENCHMARK` to `END_BENCHMARK`
+- The same cycle counts are measured on a real Pico 2 with `make measure-arm` nd shown in `make compare`
 
 builds are bare metal (own startup code + linker scripts), small and the architecture comparison is clean.
 
@@ -55,6 +56,7 @@ Run on real hardware (Pico 2 + Debug Probe, see details below):
 make flash-arm    # 1. build + flash + verify over SWD
 make uart         # 2. watch UART output live (Ctrl-C to stop)
 make halt-cm0     # 3. (when it misbehaves) SWD-halt core 0 and dump pc/lr/sp
+make measure-arm  # 4. flash + capture cycle counts into results/ for make compare
 
 make flash-smoke  # rescue: PING-only build to test when the board is silent
 make clean        # remove build_arm and build_riscv
@@ -69,6 +71,7 @@ Everything is in the toplevel Makefile:
 - `make` / `make all` ARM + RISC-V
 - `make sim` runs every produced `.uf2` through rp2350js, prints cycle count between START/END markers, UART output
 - `make compare` prints the size table (uses `pyelftools` or `llvm-size`/`*-size` if `pyelftools` isn't installed) 
+- `make measure-arm` flashes the board and captures the benchmark cycle counts into `results/hardware_arm_*.json` (both `-O2` and `-Os`); `make compare` then shows a second table with them
 - `make clean` removes `build_arm` and `build_riscv`
 
 Example:
@@ -95,6 +98,8 @@ python3 scripts/parse_elf.py build_arm/arm_O2.elf build_arm/arm_Os.elf \
 - `scripts/elf2uf2.py` converts `.bin` to RP2350 UF2 (family ID 0xe48bff56)
 - `scripts/run_sim.js` loads a `.uf2` into rp2350js and boots by setting the vector table SP/PC directly (bare images have no IMAGE_DEF block), parks core 1, and prints the cycle count between START and END.
 - `scripts/parse_elf.py` prints per arch binary size table.
+- `scripts/measure_hw.sh` flashes the board over SWD and captures the benchmark cycle counts into `results/hardware_*.json` (`make measure-arm`).
+- `scripts/parse_hw_results.js` converts a captured UART log (`CYCLE_*` lines) into that JSON
 - `tools/rp2350js` git submodule of the simulator.
 
 ## Running on real hardware (Raspberry Pi Pico 2)
@@ -106,10 +111,11 @@ The produced `.uf2` images are real-device bootable:
   requires (it scans the first 4 KB of flash; without this block the image
   never boots). ARM boots through the vector table at flash base; the RISC-V
   block carries the entry point and initial SP.
-- `board_init()` (in `src/main.c`) starts the Pico 2's 12 MHz crystal, runs
+- `board_init()` (in `src/board.c`) starts the Pico 2's 12 MHz crystal, runs
   `clk_sys`/`clk_peri` from it, and configures UART0 (`GPIO0` = TX) at
   115200 8N1. On real hardware output is visible via the marker strings:
-  `START_/END_{ARITHMETIC,ARRAY,BITWISE}_BENCHMARK`.
+  `START_/END_{ARITHMETIC,ARRAY,BITWISE}_BENCHMARK`, followed by one
+  `CYCLE_<BENCHMARK> <cycles>` line each.
 
 Steps (Debug Probe, SWD + UART):
 
@@ -120,18 +126,19 @@ Steps (Debug Probe, SWD + UART):
    (distro OpenOCD cannot flash RP2350). After a reboot, if OpenOCD reports
    `unable to find a matching CMSIS-DAP device`, reload the HID helpers:
    `sudo modprobe hid_generic usbhid` and replug the probe
-   (`docs/hardware-debugging.md`).
 3. `make flash-arm` - builds, flashes over SWD and **verifies** the image
    (`program ... verify`; BOOTSEL drag-and-drop has been seen to write flash
    only partially, leaving a silent board). `make flash-smoke` flashes the
    PING-only diagnostic build for bring-up checks.
 4. `make uart` - streams the UART output live (Ctrl-C to stop).
-   Expected: `BOOT0123456789`, six `START_/END_*_BENCHMARK` markers, then
-   `ALIVE` heartbeats.
+   Expected: the six `START_/END_*_BENCHMARK` markers and their `CYCLE_*` lines.
 5. `make halt-cm0` - SWD-halts core 0 and prints pc/lr/sp/xpsr for post-mortems.
-   Example: a `pc` inside `_hang` means a HardFault occurred (vector table
-   parks NMI/HardFault there deliberately); `docs/hardware-debugging.md`
-   explains how to read the fault frame from the stack.
+   Example: a `pc` inside `_hang` means HardFault happened (vector table
+   parks NMI/HardFault there);
+6. `make measure-arm` - flashes both `-O2` and `-Os` images, captures the
+   cycle counts and writes `results/hardware_arm_{O2,Os}.json`. `make compare`
+   then prints a second table with the hardware numbers next to the simulator
+   numbers.
 
 `make hardware` reprints this command summary.
 
@@ -200,10 +207,26 @@ stty -F /dev/ttyACM3 115200 raw -echo clocal
 timeout 30 cat /dev/ttyACM3 > /tmp/uart.log
 ```
 
-Expected lines: `BOOT0123456789`, then the six
-`START_/END_{ARITHMETIC,ARRAY,BITWISE}_BENCHMARK` markers, then `ALIVE`
-heartbeats. The firmware prints over UART0 GP0/GP1 at 115200 8N1
-(12 MHz clk_peri, divisors IBRD=6/FBRD=33).
+Expected lines: the six `START_/END_{ARITHMETIC,ARRAY,BITWISE}_BENCHMARK`
+markers, each `END_*` followed by `CYCLE_<BENCHMARK> <cycles>`, and one
+`CLOCK_HZ 12000000` line before them. The firmware prints over UART0 GP0/GP1
+at 115200 8N1 (12 MHz clk_peri, divisors IBRD=6/FBRD=33).
+
+## Hardware cycle counts
+
+`make measure-arm` flashes with verify, halt, start UART capture, reset+run, then parse the log with
+`scripts/parse_hw_results.js` into `results/hardware_arm_{O2,Os}.json`.
+
+The firmware times each benchmark with a cycle counter (`board_cycles_now()`
+in `src/board.c`: SysTick at clk_sys on ARM, `mcycle` on RISC-V) and prints
+the deltas. Timestamps are taken at the same points the simulator uses (just
+after the last byte of the START/END markers), so the two tables are directly
+comparable. Cycle counts are clock-independent; at the firmware's 12 MHz
+clk_sys one cycle is 83.3 ns.
+
+SysTick is also modeled by rp2350js, so the simulator run prints its own
+`CYCLE_*` lines too - `make sim` still uses marker timing for its JSON, so
+simulator results are unchanged by this.
 
 ## Live debugging
 
@@ -229,8 +252,6 @@ and symbolize the frame pc/lr.
 
 - `make arm` - benchmark firmware, -O2 and -Os, UF2/ELF in `build_arm/`.
 - `make smoke-arm` - `arm_smoke_O2`: `board_init()` only, then a `PING-9955`
-  line every ~100 ms, no benchmarks and no GPIO25 writes. Use it whenever a
-  board goes silent: it isolates clock/pad/UART bring-up from the benchmark.
-- The simulator (`make sim`) stays the source of truth for cycle counts; the
-  markers/ALIVE lines additionally printed on hardware-only runs are
-  diagnostics for the real-board path.
+  line every ~100 ms, no benchmarks. Use it whenever a board goes silent: it
+  isolates clock/pad/UART bring-up from the benchmark.
+- `make measure-arm` adds real results to `make compare`.

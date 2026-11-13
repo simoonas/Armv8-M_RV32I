@@ -4,54 +4,53 @@
  * Usage:
  *   node scripts/compare_results.js
  *
- * Results are read from the /results directory and displayed in a table.
  */
 const fs = require('fs');
 const path = require('path');
 
 const RESULTS_DIR = path.join(__dirname, '..', 'results');
 
-const EXPECTED_RESULTS = [
-  { arch: 'ARM', opt: '-O2', file: 'simulation_arm_O2.json' },
-  { arch: 'ARM', opt: '-Os', file: 'simulation_arm_Os.json' },
-  { arch: 'RISC-V', opt: '-O2', file: 'simulation_riscv_O2.json' },
-  { arch: 'RISC-V', opt: '-Os', file: 'simulation_riscv_Os.json' },
+const TARGETS = [
+  { arch: 'ARM', opt: '-O2', slug: 'arm_O2' },
+  { arch: 'ARM', opt: '-Os', slug: 'arm_Os' },
+  { arch: 'RISC-V', opt: '-O2', slug: 'riscv_O2' },
+  { arch: 'RISC-V', opt: '-Os', slug: 'riscv_Os' },
 ];
 
-function loadResults() {
-  return EXPECTED_RESULTS.map((expected) => {
-    const filePath = path.join(RESULTS_DIR, expected.file);
+const BENCHMARKS = [
+  ['Arithmetic', 'arithmetic'],
+  ['Array processing', 'array'],
+  ['Bitwise operations', 'bitwise'],
+];
+
+function loadResults(environment) {
+  return TARGETS.map((target) => {
+    const filePath = path.join(RESULTS_DIR, `${environment}_${target.slug}.json`);
 
     if (!fs.existsSync(filePath)) {
-      return { ...expected, measurements: null };
+      return { ...target, result: null };
     }
 
     const result = JSON.parse(fs.readFileSync(filePath, 'utf8'));
 
-    if (
-      result.environment !== 'simulation' ||
-      !result.measurements
-    ) {
-      throw new Error(`Invalid simulation result: ${expected.file}`);
+    if (result.environment !== environment || !result.measurements) {
+      throw new Error(`Invalid ${environment} result: ${path.basename(filePath)}`);
     }
 
-    return { ...expected, measurements: result.measurements };
+    return { ...target, result };
   });
 }
 
-function printResults(results) {
+function printTable(title, note, results) {
   const format = (measurement) => {
     if (!measurement) return 'N/A';
     return measurement.value.toLocaleString('en-US');
   };
 
-  const benchmarks = [
-    ['Arithmetic', 'arithmetic'],
-    ['Array processing', 'array'],
-    ['Bitwise operations', 'bitwise'],
-  ];
-
-  console.log('Environment: Simulation\n');
+  console.log(`Environment: ${title}`);
+  console.log();
+  if (note) console.log(note);
+  console.log();
 
   console.log(
     'Benchmark'.padEnd(22) +
@@ -60,18 +59,35 @@ function printResults(results) {
 
   console.log('-'.repeat(22 + results.length * 15));
 
-  for (const [label, key] of benchmarks) {
+  for (const [label, key] of BENCHMARKS) {
     console.log(
       label.padEnd(22) +
       results
-        .map((r) => format(r.measurements?.[key]).padStart(15))
+        .map((r) => format(r.result?.measurements?.[key]).padStart(15))
         .join('')
     );
   }
 }
 
+function main() {
+  printTable('Simulation', null, loadResults('simulation'));
+  console.log();
+
+  const hardware = loadResults('hardware');
+  if (hardware.some((r) => r.result)) {
+    const clockHz = hardware.find((r) => r.result).result.clock_hz;
+    const note = clockHz
+      ? `Board clock: ${(clockHz / 1e6).toLocaleString('en-US')} MHz (cycle counts, not time)`
+      : null;
+    printTable('Hardware', note, hardware);
+  } else {
+    console.log('Environment: Hardware');
+    console.log('No hardware results yet - run: make measure-arm');
+  }
+}
+
 try {
-  printResults(loadResults());
+  main();
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;

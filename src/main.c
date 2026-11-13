@@ -77,19 +77,42 @@ int main(void)
         data[i] = i + 1;
     }
 
+    /* Board metadata for the hardware-results parser (scripts/parse_hw_results.js). */
+    uart_print("CLOCK_HZ 12000000\n");
+
     /* The simulator (scripts/run_sim.js) times each benchmark between its
-     * START and END lines on UART0, so keep these strings unchanged. */
+     * START and END lines on UART0, so keep these strings unchanged.
+     *
+     * The cycle counts are taken at the same points the simulator uses (just
+     * after the last START byte and just after the last END byte is written),
+     * so the numbers are directly comparable. `make measure-arm` captures
+     * them from the real board. */
     uart_print("START_ARITHMETIC_BENCHMARK\n");
+    uint32_t start = board_cycles_now();
     benchmark_arithmetic();
     uart_print("END_ARITHMETIC_BENCHMARK\n");
+    uint32_t cycles = board_cycles_now() - start;
+    uart_print("CYCLE_ARITHMETIC ");
+    uart_print_u32(cycles);
+    uart_print("\n");
 
     uart_print("START_ARRAY_BENCHMARK\n");
+    start = board_cycles_now();
     benchmark_array();
     uart_print("END_ARRAY_BENCHMARK\n");
+    cycles = board_cycles_now() - start;
+    uart_print("CYCLE_ARRAY ");
+    uart_print_u32(cycles);
+    uart_print("\n");
 
     uart_print("START_BITWISE_BENCHMARK\n");
+    start = board_cycles_now();
     benchmark_bitwise();
     uart_print("END_BITWISE_BENCHMARK\n");
+    cycles = board_cycles_now() - start;
+    uart_print("CYCLE_BITWISE ");
+    uart_print_u32(cycles);
+    uart_print("\n");
 
     /* Nothing left to do: idle forever. */
     while (1)

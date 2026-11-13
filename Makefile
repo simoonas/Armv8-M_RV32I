@@ -5,7 +5,7 @@
 #   make compare    print the ELF size comparison table (pyelftools) and cycle comparison table
 #   make clean      remove build directories and benchmark results
 
-.PHONY: all arm riscv smoke-arm flash-arm flash-smoke uart halt-cm0 sim hardware compare clean
+.PHONY: all arm riscv smoke-arm flash-arm flash-smoke measure-arm measure-riscv uart halt-cm0 sim hardware compare clean
 
 all: arm riscv
 
@@ -60,10 +60,8 @@ smoke-arm:
 		printf 'Skipping smoke: arm-none-eabi-gcc not found\n'; \
 	fi
 
-# OpenOCD invocation. scripts/setup_openocd.sh builds the Raspberry Pi fork
-# (the only RP2350-capable version); OPENOCD_DIR auto-finds ~/.local/opt by
-# default and falls back to the legacy /tmp/opencode location, override freely.
-OPENOCD_DIR ?= $(if $(wildcard $(HOME)/.local/opt/openocd-rp2350/src/openocd),$(HOME)/.local/opt/openocd-rp2350,/tmp/opencode/openocd-rp2350)
+#scripts/setup_openocd.sh builds the Raspberry Pi fork that supports RP2350 that my distro doesn't. - S
+OPENOCD_DIR ?= $(if $(wildcard $(HOME)/.local/opt/openocd-rp2350/src/openocd),$(HOME)/.local/opt/openocd-rp2350)
 OPENOCD_OK = $(shell test -x "$(OPENOCD_DIR)/src/openocd" && echo yes)
 OPENOCD_PRECHECK = if [ "$(OPENOCD_OK)" != yes ]; then \
 	printf 'No OpenOCD at %s/src/openocd\nRun: ./scripts/setup_openocd.sh\n' "$(OPENOCD_DIR)"; exit 1; fi;
@@ -101,12 +99,21 @@ halt-cm0:
 	$(OPENOCD) -c "targets rp2350.cm0" -c "halt" \
 		-c "reg pc lr sp xpsr" -c "reg r0 r1" -c shutdown
 
+# Capture cycle counts from hardwae (SWD flash + verify, then a UART capture) and save them in results/hardware_*.json
+measure-arm: arm
+	@$(OPENOCD_PRECHECK) \
+	OPENOCD_DIR="$(OPENOCD_DIR)" TTY="$(TTY)" sh scripts/measure_hw.sh arm O2 Os
+
+measure-riscv: riscv
+	@$(OPENOCD_PRECHECK) \
+	OPENOCD_DIR="$(OPENOCD_DIR)" TTY="$(TTY)" sh scripts/measure_hw.sh riscv O2 Os
+
 hardware: arm riscv
 	@echo "Build complete. Firmware binaries (ready for flashing):"
 	@echo "  ARM   : build_arm/arm_O2.uf2   build_arm/arm_Os.uf2"
 	@echo "  RISC-V: build_riscv/riscv_*.uf2 (if a RISC-V toolchain was found)"
 	@echo
-	@echo "One-time setup (builds RP2350-capable OpenOCD into /tmp/opencode/openocd-rp2350):"
+	@echo "One-time setup (builds RP2350-capable OpenOCD into ~/.local/opt/openocd-rp2350):"
 	@echo "  ./scripts/setup_openocd.sh"
 	@echo
 	@echo "Flash + monitor (Debug Probe: SWD on DEBUG pads, UART on pins 1-3):"
@@ -114,19 +121,16 @@ hardware: arm riscv
 	@echo "  make flash-smoke   build + flash the PING-only diagnostic image"
 	@echo "  make uart          stream UART output (Ctrl-C to stop)"
 	@echo "  make halt-cm0      halt core 0 over SWD and dump pc/lr/sp/regs"
+	@echo "  make measure-arm   flash + capture cycle counts into results/ for make compare"
 	@echo
-	@echo "Full details: docs/hardware-debugging.md"
-	@echo "Note: cycle counts are only collected by the simulator (make sim)."
+	@echo "Full details: README.md (Running on real hardware)"
+	@echo "Cycle counts: simulator via make sim; real board via make measure-arm."
 
 compare: sim
-	@echo
-	@echo
-	@echo
-	@echo
-	@echo "\n== Code size comparison =="
+	@printf '\n== Code size comparison ==\n'
 	@python3 scripts/parse_elf.py build_arm/arm_O2.elf build_arm/arm_Os.elf build_riscv/riscv_O2.elf build_riscv/riscv_Os.elf 2>/dev/null || \
 	python3 scripts/parse_elf.py build_arm/arm_O2.elf build_arm/arm_Os.elf
-	@echo "\n== Benchmark cycle comparison =="
+	@printf '\n== Benchmark cycle comparison ==\n'
 	node scripts/compare_results.js
 
 clean:
