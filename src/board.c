@@ -173,6 +173,12 @@ uint32_t board_cycles_now(void)
 
 void board_cycles_init(void)
 {
+    /* The cycle counter starts paused after reset; unpause it. */
+    __asm volatile(
+        ".option push\n"
+        ".option arch, +zicsr\n"
+        "csrw mcountinhibit, zero\n"
+        ".option pop\n");
 }
 
 uint32_t board_cycles_now(void)
