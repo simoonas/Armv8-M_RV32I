@@ -4,18 +4,16 @@
  * Usage:
  *   node scripts/compare_results.js
  *
+ * Simulation results come from scripts/run_sim.js (make sim). Hardware results come from scripts/measure_hw.sh (make measure-arm)
  */
 const fs = require('fs');
 const path = require('path');
 
 const RESULTS_DIR = path.join(__dirname, '..', 'results');
 
-const TARGETS = [
-  { arch: 'ARM', opt: '-O2', slug: 'arm_O2' },
-  { arch: 'ARM', opt: '-Os', slug: 'arm_Os' },
-  { arch: 'RISC-V', opt: '-O2', slug: 'riscv_O2' },
-  { arch: 'RISC-V', opt: '-Os', slug: 'riscv_Os' },
-];
+const ARCH_LABELS = { arm: 'ARM', riscv: 'RISC-V' };
+const ARCH_ORDER = ['ARM', 'RISC-V'];
+const OPT_ORDER = ['O0', 'O1', 'O2', 'O3', 'Os', 'Oz', 'Og', 'Ofast'];
 
 const BENCHMARKS = [
   ['Arithmetic', 'arithmetic'],
@@ -24,21 +22,43 @@ const BENCHMARKS = [
 ];
 
 function loadResults(environment) {
-  return TARGETS.map((target) => {
-    const filePath = path.join(RESULTS_DIR, `${environment}_${target.slug}.json`);
+  if (!fs.existsSync(RESULTS_DIR)) return [];
 
-    if (!fs.existsSync(filePath)) {
-      return { ...target, result: null };
-    }
+  const pattern = new RegExp(`^${environment}_([a-z0-9]+)_([A-Za-z0-9]+)\\.json$`);
+  const results = [];
 
-    const result = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  for (const file of fs.readdirSync(RESULTS_DIR)) {
+    const match = file.match(pattern);
+    if (!match) continue;
+
+    const [, archSlug, optSlug] = match;
+    const result = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, file), 'utf8'));
 
     if (result.environment !== environment || !result.measurements) {
-      throw new Error(`Invalid ${environment} result: ${path.basename(filePath)}`);
+      throw new Error(`Invalid ${environment} result: ${file}`);
     }
 
-    return { ...target, result };
-  });
+    results.push({
+      arch: ARCH_LABELS[archSlug] || archSlug.toUpperCase(),
+      opt: `-${optSlug}`,
+      result,
+    });
+  }
+
+  const archRank = (arch) => {
+    const index = ARCH_ORDER.indexOf(arch);
+    return index === -1 ? ARCH_ORDER.length : index;
+  };
+  const optRank = (opt) => {
+    const index = OPT_ORDER.indexOf(opt.replace('-', ''));
+    return index === -1 ? OPT_ORDER.length : index;
+  };
+
+  results.sort((a, b) =>
+    a.arch === b.arch ? optRank(a.opt) - optRank(b.opt) : archRank(a.arch) - archRank(b.arch)
+  );
+
+  return results;
 }
 
 function printTable(title, note, results) {
@@ -48,34 +68,40 @@ function printTable(title, note, results) {
   };
 
   console.log(`Environment: ${title}`);
-  console.log();
   if (note) console.log(note);
   console.log();
 
   console.log(
     'Benchmark'.padEnd(22) +
-    results.map((r) => `${r.arch} ${r.opt}`.padStart(15)).join('')
+    results.map((r) => `${r.arch} ${r.opt}`.padStart(13)).join('')
   );
 
-  console.log('-'.repeat(22 + results.length * 15));
+  console.log('-'.repeat(22 + results.length * 13));
 
   for (const [label, key] of BENCHMARKS) {
     console.log(
       label.padEnd(22) +
       results
-        .map((r) => format(r.result?.measurements?.[key]).padStart(15))
+        .map((r) => format(r.result?.measurements?.[key]).padStart(13))
         .join('')
     );
   }
 }
 
 function main() {
-  printTable('Simulation', null, loadResults('simulation'));
+  const simulation = loadResults('simulation');
+  if (simulation.length > 0) {
+    printTable('Simulation', null, simulation);
+  } else {
+    console.log('Environment: Simulation');
+    console.log('No simulation results yet - run: make sim');
+  }
+
   console.log();
 
   const hardware = loadResults('hardware');
-  if (hardware.some((r) => r.result)) {
-    const clockHz = hardware.find((r) => r.result).result.clock_hz;
+  if (hardware.length > 0) {
+    const clockHz = hardware.find((r) => r.result.clock_hz)?.result.clock_hz;
     const note = clockHz
       ? `Board clock: ${(clockHz / 1e6).toLocaleString('en-US')} MHz (cycle counts, not time)`
       : null;

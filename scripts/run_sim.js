@@ -40,12 +40,40 @@ const MAX_STEPS = 200000000;
 const LOG_LEVEL_DEBUG = 0;
 const LOG_LEVEL_ERROR = 3;
 
-const FIRMWARE_IMAGES = [
-  { path: 'build_arm/arm_O2.uf2', arch: 'ARM', opt: '-O2' },
-  { path: 'build_arm/arm_Os.uf2', arch: 'ARM', opt: '-Os' },
-  { path: 'build_riscv/riscv_O2.uf2', arch: 'RISC-V', opt: '-O2' },
-  { path: 'build_riscv/riscv_Os.uf2', arch: 'RISC-V', opt: '-Os' },
-];
+const OPT_ORDER = ['O0', 'O1', 'O2', 'O3', 'Os', 'Oz', 'Og', 'Ofast'];
+
+// smoke images (arm_smoke_O2) does not match the pattern and is skipped
+function discoverImages() {
+  const images = [];
+
+  for (const arch of ['arm', 'riscv']) {
+    const dir = path.join(__dirname, '..', `build_${arch}`);
+    if (!fs.existsSync(dir)) continue;
+
+    const pattern = new RegExp(`^${arch}_(O[A-Za-z0-9]+)\\.uf2$`);
+    for (const file of fs.readdirSync(dir)) {
+      const match = file.match(pattern);
+      if (!match) continue;
+
+      images.push({
+        path: `build_${arch}/${file}`,
+        arch: arch === 'arm' ? 'ARM' : 'RISC-V',
+        opt: `-${match[1]}`,
+      });
+    }
+  }
+
+  const optRank = (opt) => {
+    const index = OPT_ORDER.indexOf(opt.replace('-', ''));
+    return index === -1 ? OPT_ORDER.length : index;
+  };
+
+  images.sort((a, b) =>
+    a.arch === b.arch ? optRank(a.opt) - optRank(b.opt) : a.arch.localeCompare(b.arch)
+  );
+
+  return images;
+}
 
 
 function run(image, verbose = false) {
@@ -150,9 +178,7 @@ function saveResult(image, measurements) {
 }
 
 function runAll(verbose = false) {
-  const availableImages = FIRMWARE_IMAGES.filter((image) =>
-    fs.existsSync(image.path)
-  );
+  const availableImages = discoverImages();
 
   if (availableImages.length === 0) {
     throw new Error('No firmware images found. Run make first.');
@@ -174,7 +200,7 @@ function main() {
     if (argument === '--all') {
       runAll(verbose);
     } else if (argument) {
-      const image = FIRMWARE_IMAGES.find((item) => item.path === argument);
+      const image = discoverImages().find((item) => item.path === argument);
 
       if (!image) {
         throw new Error(`Unknown firmware image: ${argument}`);

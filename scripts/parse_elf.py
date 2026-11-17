@@ -1,4 +1,5 @@
 import sys
+import re
 import subprocess
 import shutil
 from pathlib import Path
@@ -83,7 +84,8 @@ def print_markdown_table(data_list):
     
     for item in data_list:
         arch = "RISC-V" if "riscv" in item['file'].lower() else "ARM Cortex-M33"
-        opt = "Os" if "os" in item['file'].lower() else "O2"
+        match = re.search(r'_(O[A-Za-z0-9]+)\.elf$', item['file'])
+        opt = match.group(1) if match else "?"
         print(f"{item['file']} | {arch} | {opt} | {item['text']} | {item['rodata']} | {item['data']} | {item['bss']} | {item['flash_bytes']} | {item['ram_bytes']}")
 
 if __name__ == "__main__":

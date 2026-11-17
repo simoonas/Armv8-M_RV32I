@@ -52,9 +52,12 @@ function(add_firmware name opt)
     VERBATIM)
 endfunction()
 
+# Optimisation levels to build the benchmark at. Change at configure time with -DOPT_LEVELS="O0 O2 Os". Makefile, simulator and hardware script all see the images
+set(OPT_LEVELS "O0;O1;O2;O3;Os;Oz" CACHE STRING "Benchmark optimisation levels")
+
 # The benchmark programme, once per optimisation level:
-#   <arch>_O2.elf / .bin / .uf2   and   <arch>_Os.elf / .bin / .uf2
-foreach(opt O2 Os)
+#   <arch>_<opt>.elf / .bin / .uf2
+foreach(opt ${OPT_LEVELS})
   add_firmware(${BIN_PREFIX}_${opt} ${opt} ${STARTUP} src/board.c src/main.c)
 endforeach()
 

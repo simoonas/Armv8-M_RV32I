@@ -2,11 +2,11 @@
 
 Compile small C program for RP2350's 2 CPU architectures (ARM Cortex-M33, RISC-V Hazard3) and compare results:
 
-- Binary size at `-O2` and `-Os` (flash/RAM footprint)
+- Binary size and cycle counts at `-O0`, `-O1`, `-O2`, `-O3`, `-Os` and `-Oz` (flash/RAM footprint)
 - Cycle count reported by [rp2350js](tools/rp2350js) while it runs produced UF2 images from `START_BENCHMARK` to `END_BENCHMARK`
-- The same cycle counts are measured on a real Pico 2 with `make measure-arm` nd shown in `make compare`
+- The same cycle counts are measured on a real Pico 2 with `make measure-arm` and shown in `make compare`
 
-builds are bare metal (own startup code + linker scripts), small and the architecture comparison is clean.
+Builds are bare metal (own startup code + linker scripts), small and the architecture comparison is clean.
 
 ## Clone
 
@@ -44,7 +44,7 @@ brew install cmake arm-none-eabi-gcc riscv64-elf-gcc
 ## Quick start (step by step)
 
 ```bash
-make arm          # 1. build ARM benchmark images (build_arm/arm_O2|Os.uf2)
+make arm          # 1. build ARM benchmark images (build_arm/arm_O*.uf2)
 make sim          # 2. run them in the simulator, prints cycle counts
 make compare      # 3. print size + cycle comparison tables
 ```
@@ -55,10 +55,10 @@ Run on real hardware (Pico 2 + Debug Probe, see details below):
 ./scripts/setup_openocd.sh   # 0. one-time: build RP2350 OpenOCD (needs ./scripts and git)
 make flash-arm    # 1. build + flash + verify over SWD
 make uart         # 2. watch UART output live (Ctrl-C to stop)
-make halt-cm0     # 3. (when it misbehaves) SWD-halt core 0 and dump pc/lr/sp
+make halt-arm     # 3. (when it misbehaves) SWD-halt core 0 and dump pc/lr/sp
 make measure-arm  # 4. flash + capture cycle counts into results/ for make compare
 
-make flash-smoke  # rescue: PING-only build to test when the board is silent
+make flash-smoke-arm  # rescue: PING-only build to test when the board is silent
 make clean        # remove build_arm and build_riscv
 ```
 
@@ -66,12 +66,12 @@ make clean        # remove build_arm and build_riscv
 
 Everything is in the toplevel Makefile:
 
-- `make arm` builds `build_arm/arm_O2.{elf,bin,uf2}` and `build_arm/arm_Os.{elf,bin,uf2}` (Cortex-M33)
+- `make arm` builds `build_arm/arm_O{0,1,2,3,s,z}.{elf,bin,uf2}`, one per optimisation level (Cortex-M33)
 - `make riscv` same for `build_riscv/riscv_*` when a RISC-V toolchain present
 - `make` / `make all` ARM + RISC-V
 - `make sim` runs every produced `.uf2` through rp2350js, prints cycle count between START/END markers, UART output
 - `make compare` prints the size table (uses `pyelftools` or `llvm-size`/`*-size` if `pyelftools` isn't installed) 
-- `make measure-arm` flashes the board and captures the benchmark cycle counts into `results/hardware_arm_*.json` (both `-O2` and `-Os`); `make compare` then shows a second table with them
+- `make measure-arm` flashes the board and captures the benchmark cycle counts into `results/hardware_arm_*.json` (every built optimisation level); `make compare` then shows a second table with them
 - `make clean` removes `build_arm` and `build_riscv`
 
 Example:
@@ -79,8 +79,7 @@ Example:
 make
 make sim
 make compare
-python3 scripts/parse_elf.py build_arm/arm_O2.elf build_arm/arm_Os.elf \
-    build_riscv/riscv_O2.elf build_riscv/riscv_Os.elf
+python3 scripts/parse_elf.py build_arm/arm_O*.elf build_riscv/riscv_O*.elf
 ```
 
 ## main.c
@@ -93,7 +92,7 @@ python3 scripts/parse_elf.py build_arm/arm_O2.elf build_arm/arm_Os.elf \
 
 ## Layout
 
-- `CMakeLists.txt` builds each arch at `-O2`/`-Os`; needs `-DARCH=arm` or `-DARCH=riscv` (Makefile passes the toolchain file which sets it).
+- `CMakeLists.txt` builds each arch at every optimisation level (`OPT_LEVELS`, default `O0;O1;O2;O3;Os;Oz`); needs `-DARCH=arm` or `-DARCH=riscv` (Makefile passes the toolchain file which sets it).
 - `cmake/toolchain-arm.cmake`, `cmake/toolchain-riscv.cmake`
 - `scripts/elf2uf2.py` converts `.bin` to RP2350 UF2 (family ID 0xe48bff56)
 - `scripts/run_sim.js` loads a `.uf2` into rp2350js and boots by setting the vector table SP/PC directly (bare images have no IMAGE_DEF block), parks core 1, and prints the cycle count between START and END.
@@ -128,17 +127,17 @@ Steps (Debug Probe, SWD + UART):
    `sudo modprobe hid_generic usbhid` and replug the probe
 3. `make flash-arm` - builds, flashes over SWD and **verifies** the image
    (`program ... verify`; BOOTSEL drag-and-drop has been seen to write flash
-   only partially, leaving a silent board). `make flash-smoke` flashes the
+   only partially, leaving a silent board). `make flash-smoke-arm` flashes the
    PING-only diagnostic build for bring-up checks.
 4. `make uart` - streams the UART output live (Ctrl-C to stop).
    Expected: the six `START_/END_*_BENCHMARK` markers and their `CYCLE_*` lines.
-5. `make halt-cm0` - SWD-halts core 0 and prints pc/lr/sp/xpsr for post-mortems.
+5. `make halt-arm` - SWD-halts core 0 and prints pc/lr/sp/xpsr for post-mortems.
    Example: a `pc` inside `_hang` means HardFault happened (vector table
    parks NMI/HardFault there);
-6. `make measure-arm` - flashes both `-O2` and `-Os` images, captures the
-   cycle counts and writes `results/hardware_arm_{O2,Os}.json`. `make compare`
+6. `make measure-arm` - flashes every built optimisation level, captures the
+   cycle counts and writes `results/hardware_arm_<opt>.json`. `make compare`
    then prints a second table with the hardware numbers next to the simulator
-   numbers.
+   numbers. `make flash-arm OPT=O3` flashes a single level by hand.
 
 `make hardware` reprints this command summary.
 
@@ -215,7 +214,7 @@ at 115200 8N1 (12 MHz clk_peri, divisors IBRD=6/FBRD=33).
 ## Hardware cycle counts
 
 `make measure-arm` flashes with verify, halt, start UART capture, reset+run, then parse the log with
-`scripts/parse_hw_results.js` into `results/hardware_arm_{O2,Os}.json`.
+`scripts/parse_hw_results.js` into `results/hardware_arm_<opt>.json` (one file per built optimisation level).
 
 The firmware times each benchmark with a cycle counter (`board_cycles_now()`
 in `src/board.c`: SysTick at clk_sys on ARM, `mcycle` on RISC-V) and prints
@@ -250,8 +249,8 @@ and symbolize the frame pc/lr.
 
 ## Debug builds
 
-- `make arm` - benchmark firmware, -O2 and -Os, UF2/ELF in `build_arm/`.
-- `make smoke-arm` - `arm_smoke_O2`: `board_init()` only, then a `PING-9955`
+- `make arm` - benchmark firmware at every optimisation level, UF2/ELF in `build_arm/`.
+- `make flash-smoke-arm` - `arm_smoke_O2`: `board_init()` only, then a `PING-9955`
   line every ~100 ms, no benchmarks. Use it whenever a board goes silent: it
   isolates clock/pad/UART bring-up from the benchmark.
 - `make measure-arm` adds real results to `make compare`.

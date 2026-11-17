@@ -16,7 +16,7 @@
 #   make uart               show the board's serial output
 #   make flash-smoke-arm    flash the PING-only UART test for ARM
 #   make flash-smoke-riscv  same for RISC-V
-#   make measure-arm        flash -O2 and -Os, save board cycle counts in results/
+#   make measure-arm        flash every built optimisation level, save board cycle counts in results/
 #   make measure-riscv      same for RISC-V
 
 FLASH_TARGETS = flash-arm flash-riscv flash-smoke-arm flash-smoke-riscv
@@ -41,7 +41,7 @@ define build
 @if [ -z "$(call find_tool,$(3))" ]; then \
 	printf 'Skipping %s: no compiler found (looked for: %s)\n' '$(2)' '$(3)'; \
 else \
-	printf '== Building %s: -O2, -Os and smoke images ==\n' '$(2)'; \
+	printf '== Building %s: benchmark images (all optimisation levels) + smoke ==\n' '$(2)'; \
 	if [ ! -f build_$(1)/CMakeCache.txt ]; then \
 		cmake -S . -B build_$(1) -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-$(1).cmake || exit 1; \
 	fi; \
@@ -64,11 +64,12 @@ sim:
 # using OpenOCD.
 
 # Which OpenOCD to use. The first one found wins:
-#   1. the newest ~/.pico-sdk/openocd/*/openocd
-#   2. ~/.local/opt/openocd-rp2350/src/openocd
+#   1. ~/.local/opt/openocd-rp2350 (built by scripts/setup_openocd.sh)
+#   2. the newest ~/.pico-sdk/openocd/*/openocd
 #   3. openocd on PATH
-OPENOCD =$(or $(shell ls -d $(HOME)/.pico-sdk/openocd/*/openocd 2>/dev/null | sort -V | tail -n 1), \
-                $(wildcard $(HOME)/.local/opt/openocd-rp2350/src/openocd), \
+# The pico-sdk build can be missing shared libraries (like libjim) on some systems, hence the repo-built one is preferred.
+OPENOCD =$(or $(wildcard $(HOME)/.local/opt/openocd-rp2350/src/openocd), \
+                $(shell ls -d $(HOME)/.pico-sdk/openocd/*/openocd 2>/dev/null | sort -V | tail -n 1), \
                 openocd)
 OPENOCD_BIN = $(shell command -v $(OPENOCD) 2>/dev/null)
 
@@ -89,7 +90,15 @@ goal_arch = $(lastword $(subst -, ,$@))
 
 # Main entry: the hardware twin of `make sim`.
 hardware:
-	@printf 'Not implemented\n'
+	@printf '%s\n' \
+		'Hardware workflow (Pico 2 + Debug Probe, SWD + UART):' \
+		'  0. ./scripts/setup_openocd.sh  build RP2350 OpenOCD (one time)' \
+		'  1. make flash-arm              build + flash + verify over SWD' \
+		'  2. make uart                   watch UART output (Ctrl-C to stop)' \
+		'  3. make halt-arm               SWD-halt core 0, dump pc/lr/sp' \
+		'  4. make measure-arm            flash every level, save cycle counts' \
+		'  5. make flash-smoke-arm        PING-only rescue build' \
+		'  6. make compare                size + cycle tables'
 
 # Flash over SWD, always with `program ... verify`: BOOTSEL drag-and-drop has
 # been seen to write only part of the flash, leaving a silent board.
@@ -132,16 +141,19 @@ uart:
 	@printf 'Reading %s at 115200 baud (Ctrl-C to stop)\n' '$(TTY)'
 	@{ stty 115200 raw -echo clocal; cat; } < '$(TTY)'
 
-# Cycle counts over UART: scripts/measure_hw.sh flashes each image, captures
-# the UART output and saves results/hardware_<arch>_<opt>.json for make compare.
+# Cycle counts over UART: scripts/measure_hw.sh flashes each built benchmark
+# image, captures the UART output and saves results/hardware_<arch>_<opt>.json
+# for make compare.
 $(MEASURE_TARGETS):
-	OPENOCD_DIR="$(abspath $(dir $(OPENOCD_BIN))..)" TTY="$(TTY)" sh scripts/measure_hw.sh $(goal_arch) O2 Os
+	OPENOCD_BIN="$(OPENOCD_BIN)" OPENOCD_SCRIPTS="$(OPENOCD_SCRIPTS)" \
+		OPENOCD_TIMEOUT="$(if $(TIMEOUT),$(TIMEOUT) 90,)" TTY="$(TTY)" \
+		sh scripts/measure_hw.sh $(goal_arch)
 
 # ---- Compare -----------------------------------------------------------------
 compare:
 	@printf "\n== Code size comparison ==\n"
-	@python3 scripts/parse_elf.py build_arm/arm_O2.elf build_arm/arm_Os.elf build_riscv/riscv_O2.elf build_riscv/riscv_Os.elf 2>/dev/null || \
-	python3 scripts/parse_elf.py build_arm/arm_O2.elf build_arm/arm_Os.elf
+	@python3 scripts/parse_elf.py $$(ls build_arm/arm_O*.elf build_riscv/riscv_O*.elf 2>/dev/null) 2>/dev/null || \
+	python3 scripts/parse_elf.py $$(ls build_arm/arm_O*.elf 2>/dev/null)
 	@printf "\n== Benchmark cycle comparison ==\n"
 	@node scripts/compare_results.js
 
