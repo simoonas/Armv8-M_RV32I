@@ -14,6 +14,27 @@ volatile uint32_t benchmark_result;
 /* Array used by the memory-processing benchmark */
 static uint32_t data[ARRAY_SIZE];
 
+/* Results kept in RAM so a debugger can read them over SWD.
+ * The SWD script reads these five 32-bit words by address, in this order,
+ * so don't reorder them or add fields in between. */
+#define BENCH_RESULTS_MAGIC 0xBE4C0DE5u /* Before codes.. */
+
+typedef struct
+{
+    uint32_t magic;             /* BENCH_RESULTS_MAGIC once main() has started */
+    uint32_t done;              /* 1 once all three counts below are stored */
+    uint32_t cycles_arithmetic;
+    uint32_t cycles_array;
+    uint32_t cycles_bitwise;
+} bench_results_t;
+
+_Static_assert(sizeof(bench_results_t) == 5 * sizeof(uint32_t),
+               "bench_results must be exactly five 32-bit words");
+
+/* volatile: every write really goes to RAM.
+ * used: keep the symbol even if the compiler thinks nothing needs it. */
+__attribute__((used)) volatile bench_results_t bench_results;
+
 /*
  * Benchmark 1: Arithmetic
  */
@@ -69,6 +90,9 @@ __attribute__((noinline)) void benchmark_bitwise(void)
 
 int main(void)
 {
+    /* First thing: mark the results as belonging to this firmware run. */
+    bench_results.magic = BENCH_RESULTS_MAGIC;
+
     board_init();
 
     /* Initialize the array outside the timed benchmark */
@@ -92,6 +116,7 @@ int main(void)
     benchmark_arithmetic();
     uart_print("END_ARITHMETIC_BENCHMARK\n");
     uint32_t cycles = board_cycles_now() - start;
+    bench_results.cycles_arithmetic = cycles;
     uart_print("CYCLE_ARITHMETIC ");
     uart_print_u32(cycles);
     uart_print("\n");
@@ -101,6 +126,7 @@ int main(void)
     benchmark_array();
     uart_print("END_ARRAY_BENCHMARK\n");
     cycles = board_cycles_now() - start;
+    bench_results.cycles_array = cycles;
     uart_print("CYCLE_ARRAY ");
     uart_print_u32(cycles);
     uart_print("\n");
@@ -110,9 +136,13 @@ int main(void)
     benchmark_bitwise();
     uart_print("END_BITWISE_BENCHMARK\n");
     cycles = board_cycles_now() - start;
+    bench_results.cycles_bitwise = cycles;
     uart_print("CYCLE_BITWISE ");
     uart_print_u32(cycles);
     uart_print("\n");
+
+    /* All counts are stored: tell the debugger they are ready to read. */
+    bench_results.done = 1;
 
     /* Nothing left to do: idle forever. */
     while (1)
