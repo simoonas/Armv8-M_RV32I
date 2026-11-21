@@ -2,7 +2,8 @@
 #
 #   make                    build every available toolchain (arm, riscv)
 #   make sim                run every built image through the rp2350js simulator
-#   make hardware           run the benchmarks on the real board (SWD)
+#   make hardware           build, run every image on the real board, read the
+#                           results over SWD and print the tables
 #   make compare            print the code size and cycle count tables
 #   make clean              remove build directories and benchmark results
 #
@@ -23,7 +24,7 @@ FLASH_TARGETS = flash-arm flash-riscv flash-smoke-arm flash-smoke-riscv
 HALT_TARGETS  = halt-arm halt-riscv
 MEASURE_TARGETS = measure-arm measure-riscv
 
-.PHONY: all arm riscv sim compare clean hardware uart $(FLASH_TARGETS) $(HALT_TARGETS) $(MEASURE_TARGETS)
+.PHONY: all arm riscv sim compare clean hardware hardware-help uart $(FLASH_TARGETS) $(HALT_TARGETS) $(MEASURE_TARGETS)
 
 all: arm riscv
 
@@ -34,6 +35,10 @@ find_tool = $(firstword $(foreach t,$(1),$(shell command -v $(t) 2>/dev/null)))
 
 ARM_CC   = arm-none-eabi-gcc
 RISCV_CC = riscv64-elf-gcc riscv-none-elf-gcc riscv64-unknown-elf-gcc riscv32-elf-gcc
+
+# nm (lists the symbols in a program) is used by scripts/hardware_swd.sh.
+ARM_NM   = $(patsubst %gcc,%nm,$(call find_tool,$(ARM_CC)))
+RISCV_NM = $(patsubst %gcc,%nm,$(call find_tool,$(RISCV_CC)))
 
 # Builds one architecture.
 # If none of the compilers is installed, it prints a message and skips.
@@ -88,17 +93,21 @@ OPENOCD_RUN = $(if $(TIMEOUT),$(TIMEOUT) 90 )$(OPENOCD_BIN) -s $(OPENOCD_SCRIPTS
 # "arm" or "riscv": the last word of the target name.
 goal_arch = $(lastword $(subst -, ,$@))
 
-# Main entry: the hardware twin of `make sim`.
+# What the board scripts (`hardware_swd.sh` and `measure_hw.sh`) need to know about OpenOCD.
+OPENOCD_ENV = OPENOCD_BIN="$(OPENOCD_BIN)" OPENOCD_SCRIPTS="$(OPENOCD_SCRIPTS)" \
+	OPENOCD_TIMEOUT="$(if $(TIMEOUT),$(TIMEOUT) 90,)"
+
+
+# Main entry: the hardware twin of `make sim`. scripts/hardware_swd.sh flashes
+# each benchmark image, lets it run, reads the `bench_results` struct from RAM
+# over SWD and saves results/hardware_<arch>_<opt>.json.
 hardware:
-	@printf '%s\n' \
-		'Hardware workflow (Pico 2 + Debug Probe, SWD + UART):' \
-		'  0. ./scripts/setup_openocd.sh  build RP2350 OpenOCD (one time)' \
-		'  1. make flash-arm              build + flash + verify over SWD' \
-		'  2. make uart                   watch UART output (Ctrl-C to stop)' \
-		'  3. make halt-arm               SWD-halt core 0, dump pc/lr/sp' \
-		'  4. make measure-arm            flash every level, save cycle counts' \
-		'  5. make flash-smoke-arm        PING-only rescue build' \
-		'  6. make compare                size + cycle tables'
+	@for arch in arm riscv; do \
+		ls build_$$arch/$${arch}_O*.elf >/dev/null 2>&1 || \
+			{ printf 'No benchmark images in build_%s - run: make %s\n' $$arch $$arch; exit 1; }; \
+	done
+	@$(OPENOCD_ENV) NM="$(ARM_NM)" sh scripts/hardware_swd.sh arm
+	@$(OPENOCD_ENV) NM="$(RISCV_NM)" sh scripts/hardware_swd.sh riscv
 
 # Flash over SWD, always with `program ... verify`: BOOTSEL drag-and-drop has
 # been seen to write only part of the flash, leaving a silent board.
@@ -145,9 +154,7 @@ uart:
 # image, captures the UART output and saves results/hardware_<arch>_<opt>.json
 # for make compare.
 $(MEASURE_TARGETS):
-	OPENOCD_BIN="$(OPENOCD_BIN)" OPENOCD_SCRIPTS="$(OPENOCD_SCRIPTS)" \
-		OPENOCD_TIMEOUT="$(if $(TIMEOUT),$(TIMEOUT) 90,)" TTY="$(TTY)" \
-		sh scripts/measure_hw.sh $(goal_arch)
+	$(OPENOCD_ENV) TTY="$(TTY)" sh scripts/measure_hw.sh $(goal_arch)
 
 # ---- Compare -----------------------------------------------------------------
 compare:

@@ -63,7 +63,7 @@ for OPT in "$@"; do
     openocd_run -c "program $ELF verify" -c "reset halt" -c shutdown
 
     echo "== $ARCH_LABEL -$OPT: capturing UART =="
-    stty -F "$TTY" 115200 raw -echo clocal
+    stty 115200 raw -echo clocal < "$TTY"
     ( timeout 6 cat "$TTY" > "$LOG" ) &
     CAT_PID=$!
     sleep 0.3
