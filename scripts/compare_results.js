@@ -19,6 +19,7 @@ const BENCHMARKS = [
   ['Arithmetic', 'arithmetic'],
   ['Array processing', 'array'],
   ['Bitwise operations', 'bitwise'],
+  ['Float (soft-float)', 'float'],
 ];
 
 function loadResults(environment) {

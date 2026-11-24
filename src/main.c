@@ -7,6 +7,7 @@
 #define ARRAY_SIZE 256
 #define ARRAY_ITERATIONS 100
 #define BITWISE_ITERATIONS 10000
+#define FLOAT_ITERATIONS 1000
 
 /* Volatile sink used to keep each benchmark's final result observable to the compiler, which prevents their computations from being eliminated as dead code */
 volatile uint32_t benchmark_result;
@@ -15,21 +16,22 @@ volatile uint32_t benchmark_result;
 static uint32_t data[ARRAY_SIZE];
 
 /* Results kept in RAM so a debugger can read them over SWD.
- * The SWD script reads these five 32-bit words by address, in this order,
+ * The SWD script reads these six 32-bit words by address, in this order,
  * so don't reorder them or add fields in between. */
 #define BENCH_RESULTS_MAGIC 0xBE4C0DE5u /* Before codes.. */
 
 typedef struct
 {
     uint32_t magic;             /* BENCH_RESULTS_MAGIC once main() has started */
-    uint32_t done;              /* 1 once all three counts below are stored */
+    uint32_t done;              /* 1 once all four counts below are stored */
     uint32_t cycles_arithmetic;
     uint32_t cycles_array;
     uint32_t cycles_bitwise;
+    uint32_t cycles_float;
 } bench_results_t;
 
-_Static_assert(sizeof(bench_results_t) == 5 * sizeof(uint32_t),
-               "bench_results must be exactly five 32-bit words");
+_Static_assert(sizeof(bench_results_t) == 6 * sizeof(uint32_t),
+               "bench_results must be exactly six 32-bit words");
 
 /* volatile: every write really goes to RAM.
  * used: keep the symbol even if the compiler thinks nothing needs it. */
@@ -88,6 +90,32 @@ __attribute__((noinline)) void benchmark_bitwise(void)
     benchmark_result = x;
 }
 
+/*
+ * Benchmark 4: Floating point (soft-float)
+ */
+
+__attribute__((noinline)) void benchmark_float(void)
+{
+    const float scale = 1.0001f;
+    const float offset = 0.5f;
+    float x = 1.0f;
+    float acc = 0.0f;
+
+    for (uint32_t i = 0; i < FLOAT_ITERATIONS; i++)
+    {
+        x = x * scale + offset;
+        acc += x / (x + 1.0f);
+    }
+
+    /* Store the raw IEEE-754 bits */
+    union
+    {
+        float f;
+        uint32_t u;
+    } bits = {.f = acc};
+    benchmark_result = bits.u;
+}
+
 int main(void)
 {
     /* First thing: mark the results as belonging to this firmware run. */
@@ -138,6 +166,16 @@ int main(void)
     cycles = board_cycles_now() - start;
     bench_results.cycles_bitwise = cycles;
     uart_print("CYCLE_BITWISE ");
+    uart_print_u32(cycles);
+    uart_print("\n");
+
+    uart_print("START_FLOAT_BENCHMARK\n");
+    start = board_cycles_now();
+    benchmark_float();
+    uart_print("END_FLOAT_BENCHMARK\n");
+    cycles = board_cycles_now() - start;
+    bench_results.cycles_float = cycles;
+    uart_print("CYCLE_FLOAT ");
     uart_print_u32(cycles);
     uart_print("\n");
 

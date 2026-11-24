@@ -12,7 +12,7 @@
 # For each image this script:
 #   run 1: program + verify, reset halt, clear `done`, resume
 #   (wait RUN_WAIT seconds for the benchmarks to finish)
-#   run 2: halt, read the five words with `mdw`
+#   run 2: halt, read the six words with `mdw`
 # and then parses the OpenOCD log into results/hardware_<arch>_<opt>.json.
 set -eu
 
@@ -88,7 +88,7 @@ for OPT in "$@"; do
 
     echo "== $ARCH_LABEL -$OPT: running for ${RUN_WAIT}s, then reading results =="
     sleep "$RUN_WAIT"
-    openocd_run -c halt -c "mdw $ADDR 5" -c shutdown >> "$LOG" 2>&1 \
+    openocd_run -c halt -c "mdw $ADDR 6" -c shutdown >> "$LOG" 2>&1 \
         || fail_with_log "Reading the results failed" "$LOG"
 
     node "$ROOT/scripts/parse_hw_results.js" "$LOG" --swd-address "$ADDR" \

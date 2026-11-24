@@ -26,13 +26,17 @@ SECTIONS
   .rodata :
   {
     *(.rodata*)
+    . = ALIGN(4);
   } > FLASH
 
   __data_lma = LOADADDR(.data);
-  .data ALIGN(4) :
+  .data :
   {
+    . = ALIGN(4);
     __data_start = .;
     *(.data*)
+    *(.sdata*)
+    . = ALIGN(4);
     __data_end = .;
   } > RAM AT> FLASH
 

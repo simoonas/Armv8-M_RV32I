@@ -33,12 +33,17 @@ function(add_firmware name opt)
   set_target_properties(${name} PROPERTIES SUFFIX .elf)
 
   target_compile_options(${name} PRIVATE ${COMMON_C_FLAGS} -${opt})
+  # COMMON_C_FLAGS is passed to the link too, so GCC picks the libgcc build
+  # that matches the CPU.
   target_link_options(${name} PRIVATE
+    ${COMMON_C_FLAGS}
     -nostdlib
     -T ${CMAKE_SOURCE_DIR}/${LDSCRIPT}
     -Wl,--gc-sections
-    -lgcc
   )
+  # libgcc provides the soft-float routines (__aeabi_fmul, __mulsf3).
+  # Linked as a library so it comes after the object files.
+  target_link_libraries(${name} PRIVATE gcc)
 
   add_custom_command(TARGET ${name} POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O binary

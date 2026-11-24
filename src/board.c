@@ -64,17 +64,7 @@ static void poll_set(volatile uint32_t *reg, uint32_t mask)
 /* Real-hardware bring-up, called once before any timed work:
  * XOSC 12 MHz -> clk_ref -> clk_sys, then UART0 on GPIO0 (TX) at 115200. */
 void board_init(void)
-{
-    /* Release peripherals from reset. */
-    RESETS_CLEAR = RESETS_RELEASE_MASK;
-    poll_set(&RESETS_DONE, RESETS_RELEASE_MASK);
-
-    /* RP2350 pads come out of reset isolated (ISO=1, IE=0): until ISO is
-     * cleared a pad neither drives its pin nor sees its input. */
-    volatile uint32_t *pad = (volatile uint32_t *)(PADS_BANK0_BASE + 0x04u);
-    pad[0] &= ~PADS_BANK0_ISO;                          /* GPIO0: UART0 TX */
-    pad[1] = (pad[1] & ~PADS_BANK0_ISO) | PADS_BANK0_IE; /* GPIO1: UART0 RX */
-
+{    
     /* Start the crystal and wait for it to be stable. */
     XOSC_STARTUP = 47u; /* (12 kHz cycles + 128) / 256 */
     XOSC_CTRL = XOSC_ENABLE;
@@ -87,6 +77,16 @@ void board_init(void)
     CLK_SYS_CTRL = 0u; /* clk_sys source: clk_ref */
     poll_set(&CLK_SYS_SELECTED, 1u << 0);
     CLK_PERI_CTRL |= 0x800u; /* clk_peri enable, aux = clk_sys */
+
+    /* Release peripherals from reset. */
+    RESETS_CLEAR = RESETS_RELEASE_MASK;
+    poll_set(&RESETS_DONE, RESETS_RELEASE_MASK);
+
+    /* RP2350 pads come out of reset isolated (ISO=1, IE=0): until ISO is
+     * cleared a pad neither drives its pin nor sees its input. */
+    volatile uint32_t *pad = (volatile uint32_t *)(PADS_BANK0_BASE + 0x04u);
+    pad[0] &= ~PADS_BANK0_ISO;                          /* GPIO0: UART0 TX */
+    pad[1] = (pad[1] & ~PADS_BANK0_ISO) | PADS_BANK0_IE; /* GPIO1: UART0 RX */
 
     /* UART0 on the Pico 2's default debug pins: GPIO0 = TX, GPIO1 = RX.
      * 115200: 12 MHz / (16 * (6 + 33/64)) = 115108 (-0.08%). */

@@ -86,6 +86,7 @@ function run(image, verbose = false) {
     arithmetic: { start: null, end: null },
     array: { start: null, end: null },
     bitwise: { start: null, end: null },
+    float: { start: null, end: null },
   }
 
   mcu.uart[0].onByte = (byte) => {

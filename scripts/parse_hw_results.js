@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 
 const RESULTS_DIR = path.join(__dirname, '..', 'results');
-const BENCHMARKS = ['arithmetic', 'array', 'bitwise'];
+const BENCHMARKS = ['arithmetic', 'array', 'bitwise', 'float'];
 const BENCH_RESULTS_MAGIC = 0xbe4c0de5;
 
 function parseArgs(argv) {
@@ -62,7 +62,7 @@ function parseLog(logPath, defaultClockHz) {
   let clockHz = defaultClockHz;
 
   for (const line of text.split(/\r?\n/)) {
-    const cycle = line.match(/^CYCLE_(ARITHMETIC|ARRAY|BITWISE)\s+(\d+)$/);
+    const cycle = line.match(/^CYCLE_(ARITHMETIC|ARRAY|BITWISE|FLOAT)\s+(\d+)$/);
     if (cycle) {
       measurements[cycle[1].toLowerCase()] = { value: Number(cycle[2]) };
     }
@@ -89,7 +89,7 @@ function parseLog(logPath, defaultClockHz) {
 }
 
 // Finds the `mdw` output line for `address` in an OpenOCD log, e.g.
-//   0x20000000: be4c0de5 00000001 0000c99b 0004537f 0001b2ca
+//   0x20000000: be4c0de5 00000001 0000c99b 0004537f 0001b2ca 00061a80
 // and checks the struct before trusting the counts.
 function parseSwdLog(logPath, address, clockHz) {
   const text = fs.readFileSync(logPath, 'utf8');
@@ -103,8 +103,8 @@ function parseSwdLog(logPath, address, clockHz) {
     }
   }
 
-  if (!words || words.length < 5) {
-    throw new Error(`No 5-word mdw read of ${hex} in ${logPath} - did the halt or read fail?`);
+  if (!words || words.length < 2 + BENCHMARKS.length) {
+    throw new Error(`No ${2 + BENCHMARKS.length}-word mdw read of ${hex} in ${logPath} - did the halt or read fail?`);
   }
 
   const [magic, done, ...cycles] = words;
